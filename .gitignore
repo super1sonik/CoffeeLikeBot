@@ -1,0 +1,30 @@
+﻿# Build results
+bin/
+obj/
+out/
+
+# Rider
+.idea/
+*.sln.iml
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Logs
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# Environment / secrets
+*.env
+secrets.json
+appsettings.Development.json
