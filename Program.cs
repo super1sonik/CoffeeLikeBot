@@ -22,6 +22,7 @@ namespace CoffeeLikeBot
 
         // Словарь для хранения состояний пользователей
         private static readonly Dictionary<long, string> UserStates = new();
+        private static readonly Dictionary<long, string> UserTempData = new(); // Для временного хранения данных регистрации
 
         private static readonly ReplyKeyboardMarkup MainKeyboard = new(new[]
         {
@@ -667,7 +668,21 @@ namespace CoffeeLikeBot
             var buttons = new List<InlineKeyboardButton[]>();
             foreach (var req in pending)
             {
-                var userDisplay = req.Username != null ? $"@{req.Username}" : $"ID:{req.UserId}";
+                // Формируем отображаемое имя: ФИО или @username, или ID
+                string userDisplay;
+                if (!string.IsNullOrEmpty(req.FullName))
+                {
+                    userDisplay = $"{req.FullName}";
+                }
+                else if (!string.IsNullOrEmpty(req.Username))
+                {
+                    userDisplay = $"@{req.Username}";
+                }
+                else
+                {
+                    userDisplay = $"ID: {req.UserId}";
+                }
+                
                 buttons.Add(new[]
                 {
                     InlineKeyboardButton.WithCallbackData(
@@ -693,6 +708,13 @@ namespace CoffeeLikeBot
             }
 
             var userDisplay = request.Value.Username != null ? $"@{request.Value.Username}" : $"ID: {request.Value.UserId}";
+            
+            // Формируем полную информацию о пользователе
+            string userInfo = $"👤 От: {userDisplay}";
+            if (!string.IsNullOrEmpty(request.Value.FullName))
+            {
+                userInfo = $"👤 Имя: {request.Value.FullName}\n📱 Username: {(request.Value.Username != null ? "@" + request.Value.Username : "—")}\n🆔 ID: {request.Value.UserId}";
+            }
 
             var buttons = new[]
             {
@@ -712,7 +734,7 @@ namespace CoffeeLikeBot
             await _bot.SendMessage(chatId,
                 $"━━━━━━━━━━━━━━━━\n" +
                 $"📋 Запрос #{requestId}\n\n" +
-                $"👤 От: {userDisplay}\n" +
+                $"{userInfo}\n" +
                 $"✅ Задание: {request.Value.TaskTitle}\n" +
                 $"💰 Баллов: {request.Value.Reward}\n" +
                 $"🕐 Дата: {request.Value.CreatedAt:dd.MM.yyyy HH:mm}\n\n" +
@@ -854,7 +876,8 @@ namespace CoffeeLikeBot
                 CREATE TABLE IF NOT EXISTS Users (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     TelegramId INTEGER UNIQUE NOT NULL,
-                    Name TEXT,
+                    Username TEXT,
+                    FullName TEXT,
                     Points INTEGER DEFAULT 0,
                     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
                 )");
@@ -918,12 +941,29 @@ namespace CoffeeLikeBot
             }
         }
 
+        private static bool IsUserRegistered(long telegramId)
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            var count = connection.QuerySingleOrDefault<int>(
+                "SELECT COUNT(*) FROM Users WHERE TelegramId = @TelegramId AND FullName IS NOT NULL AND FullName != ''",
+                new { TelegramId = telegramId });
+            return count > 0;
+        }
+
         private static void RegisterUser(long telegramId, string? username)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             connection.Execute(
-                "INSERT OR IGNORE INTO Users (TelegramId, Name, Points) VALUES (@TelegramId, @Name, 0)", 
-                new { TelegramId = telegramId, Name = username ?? "" });
+                "INSERT OR IGNORE INTO Users (TelegramId, Username, Points) VALUES (@TelegramId, @Username, 0)", 
+                new { TelegramId = telegramId, Username = username ?? "" });
+        }
+
+        private static void RegisterUserWithName(long telegramId, string? username, string fullName)
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            connection.Execute(
+                "INSERT OR REPLACE INTO Users (TelegramId, Username, FullName, Points) VALUES (@TelegramId, @Username, @FullName, COALESCE((SELECT Points FROM Users WHERE TelegramId = @TelegramId), 0))", 
+                new { TelegramId = telegramId, Username = username ?? "", FullName = fullName });
         }
 
         private static int GetPoints(long telegramId)
@@ -961,17 +1001,17 @@ namespace CoffeeLikeBot
         }
 
         // === БАЗА ДАННЫХ - ЗАПРОСЫ ===
-        private static (long UserId, int TaskId, string? Username, string TaskTitle, int Reward, DateTime CreatedAt)? GetRequestById(int requestId)
+        private static (long UserId, int TaskId, string? Username, string? FullName, string TaskTitle, int Reward, DateTime CreatedAt)? GetRequestById(int requestId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
-                SELECT c.UserId, c.TaskId, u.Name as Username, 
+                SELECT c.UserId, c.TaskId, u.Username, u.FullName,
                        t.Title as TaskTitle, t.Reward, c.CreatedAt
                 FROM CompletedTasks c
                 JOIN Users u ON u.TelegramId = c.UserId
                 JOIN Tasks t ON t.Id = c.TaskId
                 WHERE c.Id = @RequestId AND c.Status = 'pending'";
-            return connection.QueryFirstOrDefault<(long, int, string?, string, int, DateTime)>(sql, new { RequestId = requestId });
+            return connection.QueryFirstOrDefault<(long, int, string?, string?, string, int, DateTime)>(sql, new { RequestId = requestId });
         }
 
         private static IEnumerable<(int Id, string Title, int Reward)> GetTasks()
@@ -1030,18 +1070,18 @@ namespace CoffeeLikeBot
                 new { Id = requestId, Status = status });
         }
 
-        private static List<(int RequestId, long UserId, int TaskId, string? Username, string TaskTitle, int Reward, DateTime CreatedAt)> GetPendingTasks()
+        private static List<(int RequestId, long UserId, int TaskId, string? Username, string? FullName, string TaskTitle, int Reward, DateTime CreatedAt)> GetPendingTasks()
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
-                SELECT c.Id as RequestId, c.UserId, c.TaskId, u.Name as Username, 
+                SELECT c.Id as RequestId, c.UserId, c.TaskId, u.Username, u.FullName,
                        t.Title as TaskTitle, t.Reward, c.CreatedAt
                 FROM CompletedTasks c
                 JOIN Users u ON u.TelegramId = c.UserId
                 JOIN Tasks t ON t.Id = c.TaskId
                 WHERE c.Status = 'pending'
                 ORDER BY c.CreatedAt ASC";
-            return connection.Query<(int, long, int, string?, string, int, DateTime)>(sql).AsList();
+            return connection.Query<(int, long, int, string?, string?, string, int, DateTime)>(sql).AsList();
         }
 
         // === МАГАЗИН ===
