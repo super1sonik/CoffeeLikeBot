@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -185,6 +185,133 @@ namespace CoffeeLikeBot
                                 cancellationToken: cancellationToken);
                             return;
                         }
+                        
+                        // Добавление товара - шаг 1: название
+                        if (state == "awaiting_product_name")
+                        {
+                            if (!UserRegistrationData.ContainsKey(userId))
+                                UserRegistrationData[userId] = new Dictionary<string, string>();
+                            
+                            UserRegistrationData[userId]["product_name"] = messageText.Trim();
+                            UserStates[userId] = "awaiting_product_description";
+                            
+                            await _bot.SendMessage(chatId,
+                                "📝 Шаг 2️⃣: Введите описание товара\n\n" +
+                                "Пример: Беспроводные наушники с шумоподавлением",
+                                cancellationToken: cancellationToken);
+                            return;
+                        }
+
+                        // Добавление товара - шаг 2: описание
+                        if (state == "awaiting_product_description")
+                        {
+                            UserRegistrationData[userId]["product_description"] = messageText.Trim();
+                            UserStates[userId] = "awaiting_product_price";
+                            
+                            await _bot.SendMessage(chatId,
+                                "💰 Шаг 3️⃣: Введите цену в бонусах\n\n" +
+                                "Пример: 5000",
+                                cancellationToken: cancellationToken);
+                            return;
+                        }
+
+                        // Добавление товара - шаг 3: цена
+                        if (state == "awaiting_product_price")
+                        {
+                            if (int.TryParse(messageText.Trim(), out int price) && price > 0)
+                            {
+                                UserRegistrationData[userId]["product_price"] = price.ToString();
+                                UserStates[userId] = "awaiting_product_category";
+                                
+                                var categoryButtons = new[]
+                                {
+                                    new KeyboardButton[] { "📱 Техника" },
+                                    new KeyboardButton[] { "👕 Мерч" },
+                                    new KeyboardButton[] { "🎟 Сертификаты" }
+                                };
+                                
+                                await _bot.SendMessage(chatId,
+                                    "📂 Шаг 4️⃣: Выберите категорию товара:",
+                                    replyMarkup: new ReplyKeyboardMarkup(categoryButtons) { ResizeKeyboard = true },
+                                    cancellationToken: cancellationToken);
+                            }
+                            else
+                            {
+                                await _bot.SendMessage(chatId,
+                                    "❌ Неверный формат! Введите число больше 0\n\n" +
+                                    "Пример: 5000",
+                                    cancellationToken: cancellationToken);
+                            }
+                            return;
+                        }
+
+                        // Добавление товара - шаг 4: категория
+                        if (state == "awaiting_product_category")
+                        {
+                            string category = messageText switch
+                            {
+                                "📱 Техника" => "tech",
+                                "👕 Мерч" => "merch",
+                                "🎟 Сертификаты" => "cert",
+                                _ => ""
+                            };
+                            
+                            if (!string.IsNullOrEmpty(category))
+                            {
+                                UserRegistrationData[userId]["product_category"] = category;
+                                UserStates[userId] = "awaiting_product_image";
+                                
+                                await _bot.SendMessage(chatId,
+                                    "🖼 Шаг 5️⃣: Отправьте ссылку на изображение товара\n\n" +
+                                    "Или отправьте 'пропустить' чтобы добавить без изображения\n\n" +
+                                    "Пример: https://example.com/image.jpg",
+                                    replyMarkup: new ReplyKeyboardRemove(),
+                                    cancellationToken: cancellationToken);
+                            }
+                            else
+                            {
+                                await _bot.SendMessage(chatId,
+                                    "❌ Выберите категорию из предложенных кнопок!",
+                                    cancellationToken: cancellationToken);
+                            }
+                            return;
+                        }
+
+                        // Добавление товара - шаг 5: изображение
+                        if (state == "awaiting_product_image")
+                        {
+                            string imageUrl = messageText.Trim().ToLower() == "пропустить" ? "" : messageText.Trim();
+                            
+                            var name = UserRegistrationData[userId]["product_name"];
+                            var description = UserRegistrationData[userId]["product_description"];
+                            var price = int.Parse(UserRegistrationData[userId]["product_price"]);
+                            var category = UserRegistrationData[userId]["product_category"];
+                            
+                            AddProduct(name, description, price, category, imageUrl);
+                            
+                            var categoryName = category switch
+                            {
+                                "tech" => "📱 Техника",
+                                "merch" => "👕 Мерч",
+                                "cert" => "🎟 Сертификаты",
+                                _ => "Товары"
+                            };
+                            
+                            UserStates.Remove(userId);
+                            UserRegistrationData.Remove(userId);
+                            
+                            var keyboard = userId == AdminId ? AdminKeyboard : MainKeyboard;
+                            await _bot.SendMessage(chatId,
+                                "✅ Товар успешно добавлен!\n\n" +
+                                $"📦 Название: {name}\n" +
+                                $"📝 Описание: {description}\n" +
+                                $"💰 Цена: {price} бонусов\n" +
+                                $"📂 Категория: {categoryName}\n" +
+                                $"🖼 Изображение: {(string.IsNullOrEmpty(imageUrl) ? "Нет" : "Есть")}",
+                                replyMarkup: keyboard,
+                                cancellationToken: cancellationToken);
+                            return;
+                        }
                     }
 
                     // Команда /myid
@@ -270,7 +397,15 @@ namespace CoffeeLikeBot
                             break;
 
                         case "Магазин":
-                            await ShowShopCategories(chatId, cancellationToken);
+                            // Для админа показываем меню управления магазином
+                            if (userId == AdminId)
+                            {
+                                await ShowAdminShopMenu(chatId, cancellationToken);
+                            }
+                            else
+                            {
+                                await ShowShopCategories(chatId, cancellationToken);
+                            }
                             break;
 
                         case "История":
@@ -547,6 +682,60 @@ namespace CoffeeLikeBot
                         return;
                     }
 
+                    // === АДМИН - УПРАВЛЕНИЕ МАГАЗИНОМ ===
+                    if (callbackQuery.Data == "admin_shop_menu")
+                    {
+                        await ShowAdminShopMenu(chatId, cancellationToken);
+                        await _bot.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    if (callbackQuery.Data == "admin_view_products")
+                    {
+                        await ShowAllProductsList(chatId, cancellationToken);
+                        await _bot.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    if (callbackQuery.Data == "admin_add_product")
+                    {
+                        Console.WriteLine("🔍 Админ начал добавление товара");
+                        UserStates[userId] = "awaiting_product_name";
+                        await _bot.SendMessage(chatId,
+                            "📦 Добавление нового товара\n\n" +
+                            "Шаг 1️⃣: Введите название товара\n\n" +
+                            "Пример: Наушники AirPods",
+                            cancellationToken: cancellationToken);
+                        await _bot.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    if (callbackQuery.Data == "admin_delete_product")
+                    {
+                        await ShowProductsForDelete(chatId, cancellationToken);
+                        await _bot.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    if (callbackQuery.Data.StartsWith("delete_product:"))
+                    {
+                        var productId = int.Parse(callbackQuery.Data.Split(':')[1]);
+                        var product = GetProductById(productId);
+                        DeleteProduct(productId);
+                        await _bot.AnswerCallbackQuery(callbackQuery.Id, 
+                            $"✅ Товар '{product.Name}' удален!", 
+                            cancellationToken: cancellationToken);
+                        await ShowProductsForDelete(chatId, cancellationToken);
+                        return;
+                    }
+
+                    if (callbackQuery.Data == "admin_shop_back")
+                    {
+                        await ShowAdminShopMenu(chatId, cancellationToken);
+                        await _bot.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
+                        return;
+                    }
+                    
                     // === МАГАЗИН ===
                     if (callbackQuery.Data == "shop_main")
                     {
@@ -557,8 +746,7 @@ namespace CoffeeLikeBot
 
                     if (callbackQuery.Data.StartsWith("shop:"))
                     {
-                        var category = callbackQuery.Data.Split(':')[1];
-                        await ShowProducts(chatId, category, cancellationToken);
+                        var category = callbackQuery.Data.Split(':')[1]; await ShowProducts(chatId, category, cancellationToken);
                         await _bot.AnswerCallbackQuery(callbackQuery.Id, cancellationToken: cancellationToken);
                         return;
                     }
@@ -616,7 +804,7 @@ namespace CoffeeLikeBot
                             cancellationToken: cancellationToken);
                         return;
                     }
-
+                    
                     if (callbackQuery.Data.StartsWith("back_category:"))
                     {
                         var category = callbackQuery.Data.Split(':')[1];
@@ -631,7 +819,97 @@ namespace CoffeeLikeBot
                 Console.WriteLine($"❌ Ошибка: {ex.Message}\n{ex.StackTrace}");
             }
         }
+        
+        private static void AddProduct(string name, string description, int price, string category, string imageUrl)
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            connection.Execute(
+                "INSERT INTO Products (Name, Description, Price, Category, ImageUrl) VALUES (@Name, @Description, @Price, @Category, @ImageUrl)",
+                new { Name = name, Description = description, Price = price, Category = category, ImageUrl = imageUrl });
+        }
+        private static async Task ShowAllProductsList(long chatId, CancellationToken cancellationToken)
+        {
+            var products = GetAllProducts();
 
+            if (!products.Any())
+            {
+                await _bot.SendMessage(chatId,
+                    "📦 Товаров в магазине нет",
+                    replyMarkup: new InlineKeyboardMarkup(
+                        InlineKeyboardButton.WithCallbackData("◀️ Назад", "admin_shop_back")),
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
+            string message = "📋 Все товары в магазине:\n\n";
+            int count = 1;
+            foreach (var product in products)
+            {
+                message += $"{count}. 📦 {product.Name}\n   💰 {product.Price} бонусов\n\n";
+                count++;
+            }
+
+            await _bot.SendMessage(chatId,
+                message,
+                replyMarkup: new InlineKeyboardMarkup(
+                    InlineKeyboardButton.WithCallbackData("◀️ Назад", "admin_shop_back")),
+                cancellationToken: cancellationToken);
+        }
+        
+        // === УПРАВЛЕНИЕ ТОВАРАМИ ===
+        private static IEnumerable<(int Id, string Name, int Price, string Category)> GetAllProducts()
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            return connection.Query<(int, string, int, string)>(
+                "SELECT Id, Name, Price, Category FROM Products ORDER BY Category, Name");
+        }
+
+        private static async Task ShowProductsForDelete(long chatId, CancellationToken cancellationToken)
+        {
+            var products = GetAllProducts();
+
+            if (!products.Any())
+            {
+                await _bot.SendMessage(chatId,
+                    "📦 Товаров для удаления нет",
+                    replyMarkup: new InlineKeyboardMarkup(
+                        InlineKeyboardButton.WithCallbackData("◀️ Назад", "admin_shop_back")),
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
+            var buttons = new List<InlineKeyboardButton[]>();
+            foreach (var product in products)
+            {
+                var categoryEmoji = product.Category switch
+                {
+                    "tech" => "📱",
+                    "merch" => "👕",
+                    "cert" => "🎟",
+                    _ => "📦"
+                };
+        
+                buttons.Add(new[]
+                {
+                    InlineKeyboardButton.WithCallbackData(
+                        $"🗑 {categoryEmoji} {product.Name} ({product.Price} 💰)",
+                        $"delete_product:{product.Id}")
+                });
+            }
+            buttons.Add(new[] { InlineKeyboardButton.WithCallbackData("◀️ Назад", "admin_shop_back") });
+
+            await _bot.SendMessage(chatId,
+                "🗑 Выберите товар для удаления:",
+                replyMarkup: new InlineKeyboardMarkup(buttons),
+                cancellationToken: cancellationToken);
+        }
+
+        private static void DeleteProduct(int productId)
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            connection.Execute("DELETE FROM Products WHERE Id = @Id", new { Id = productId });
+        }
+        
         // === ПРОФИЛЬ ===
         private static async Task ShowProfileInfo(long chatId, long userId, CancellationToken cancellationToken)
         {
@@ -653,7 +931,23 @@ namespace CoffeeLikeBot
 
             await _bot.SendMessage(chatId, message, cancellationToken: cancellationToken);
         }
+        
+        // === АДМИН - МАГАЗИН ===
+        private static async Task ShowAdminShopMenu(long chatId, CancellationToken cancellationToken)
+        {
+            var buttons = new[]
+            {
+                new [] { InlineKeyboardButton.WithCallbackData("📋 Просмотреть товары", "admin_view_products") },
+                new [] { InlineKeyboardButton.WithCallbackData("➕ Добавить товар", "admin_add_product") },
+                new [] { InlineKeyboardButton.WithCallbackData("🗑 Удалить товар", "admin_delete_product") }
+            };
 
+            await _bot.SendMessage(chatId,
+                "🛍️ Управление магазином\n\nВыберите действие:",
+                replyMarkup: new InlineKeyboardMarkup(buttons),
+                cancellationToken: cancellationToken);
+        }
+        
         // === АДМИН - УПРАВЛЕНИЕ ЗАДАНИЯМИ ===
         private static async Task ShowAdminTasksMenu(long chatId, CancellationToken cancellationToken)
         {
