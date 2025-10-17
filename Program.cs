@@ -18,7 +18,7 @@ namespace CoffeeLikeBot
     {
         private static ITelegramBotClient _bot = null!;
         private static readonly string DbPath = "Data Source=coffeelike.db";
-        private static readonly long AdminId = 856717073;
+        private static readonly List<long> AdminIds = new() { 856717073, 591241444 };
 
         private static readonly Dictionary<long, string> UserStates = new();
         private static readonly Dictionary<long, Dictionary<string, string>> UserRegistrationData = new();
@@ -95,7 +95,8 @@ namespace CoffeeLikeBot
                         Console.WriteLine($"🔍 Состояние: {state}");
                         
                         // Добавление задания админом
-                        if (state == "awaiting_task" && userId == AdminId)
+                        if (state == "awaiting_task" && AdminIds.Contains(userId))
+
                         {
                             Console.WriteLine($"🔍 Получено сообщение от админа: {messageText}");
                             
@@ -175,12 +176,12 @@ namespace CoffeeLikeBot
                             UserStates.Remove(userId);
                             UserRegistrationData.Remove(userId);
                             
-                            var keyboard = userId == AdminId ? AdminKeyboard : MainKeyboard;
+                            var keyboard = AdminIds.Contains(userId) ? AdminKeyboard : MainKeyboard;
                             await _bot.SendMessage(chatId,
                                 $"✅ Регистрация завершена!\n\n" +
                                 $"👤 {fullName}\n" +
                                 $"🆔 ID: {userId}\n\n" +
-                                $"Добро пожаловать в программу лояльности Coffee Like! ☕",
+                                $"Добро пожаловать в программу лояльности Coffee Like! ☕ \n",
                                 replyMarkup: keyboard,
                                 cancellationToken: cancellationToken);
                             return;
@@ -300,7 +301,7 @@ namespace CoffeeLikeBot
                             UserStates.Remove(userId);
                             UserRegistrationData.Remove(userId);
                             
-                            var keyboard = userId == AdminId ? AdminKeyboard : MainKeyboard;
+                            var keyboard = AdminIds.Contains(userId) ? AdminKeyboard : MainKeyboard;
                             await _bot.SendMessage(chatId,
                                 "✅ Товар успешно добавлен!\n\n" +
                                 $"📦 Название: {name}\n" +
@@ -314,14 +315,38 @@ namespace CoffeeLikeBot
                         }
                     }
 
+                    // Команда /cleanup (только для админа)
+                    if (messageText == "/cleanup" && AdminIds.Contains(userId))
+                    {
+                        using (var connection = new SqliteConnection(DbPath))
+                        {
+                            // Удаляем все тестовые данные
+                            int orders = connection.Execute("DELETE FROM Orders");
+                            int completed = connection.Execute("DELETE FROM CompletedTasks");
+                            int products = connection.Execute("DELETE FROM Products");
+                            int tasks = connection.Execute("DELETE FROM Tasks");
+        
+                            Console.WriteLine($"🧹 Очистка: Orders={orders}, Completed={completed}, Products={products}, Tasks={tasks}");
+        
+                            await _bot.SendMessage(chatId,
+                                $"🧹 База очищена!\n\n" +
+                                $"❌ Заказы: {orders}\n" +
+                                $"❌ Выполнения: {completed}\n" +
+                                $"❌ Товары: {products}\n" +
+                                $"❌ Задания: {tasks}",
+                                cancellationToken: cancellationToken);
+                        }
+                        return;
+                    }
+                    
                     // Команда /myid
                     if (messageText == "/myid")
                     {
                         await _bot.SendMessage(chatId,
                             $"🆔 Ваш Telegram ID: {userId}\n" +
                             $"👤 Username: @{username ?? "не указан"}\n" +
-                            $"🔑 Админ ID: {AdminId}\n" +
-                            $"👨‍💼 Вы админ: {(userId == AdminId ? "Да ✅" : "Нет ❌")}",
+                            $"🔑 Админ ID: {AdminIds}\n" +
+                            $"👨‍💼 Вы админ: {(AdminIds.Contains(userId) ? "Да ✅" : "Нет ❌")}",
                             cancellationToken: cancellationToken);
                         return;
                     }
@@ -338,6 +363,9 @@ namespace CoffeeLikeBot
                             
                             await _bot.SendMessage(chatId,
                                 "👋 Добро пожаловать в Coffee Like Bot!\n\n" +
+                                $"Здесь вы сможете выполнять задания и получать баллы. \n\n" +
+                                "Баллы можно тратить в Магазине на различные товары. \n\n" +
+                                "Хорошего дня!\n\n" +
                                 "📝 Для начала работы укажите ваше имя:",
                                 replyMarkup: new ReplyKeyboardRemove(),
                                 cancellationToken: cancellationToken);
@@ -345,8 +373,7 @@ namespace CoffeeLikeBot
                         }
                         
                         Console.WriteLine($"🔍 Пользователь уже зарегистрирован");
-                        
-                        var keyboard = userId == AdminId ? AdminKeyboard : MainKeyboard;
+                        var keyboard = AdminIds.Contains(userId) ? AdminKeyboard : MainKeyboard;
                         var userInfo = GetUserInfo(userId);
                         await _bot.SendMessage(chatId, 
                             $"☕ С возвращением, {userInfo.FullName}!\n\n" +
@@ -367,7 +394,7 @@ namespace CoffeeLikeBot
                     switch (messageText)
                     { 
                         case "Мои бонусы":
-                            var keyboard = userId == AdminId ? AdminKeyboard : MainKeyboard;
+                            var keyboard = AdminIds.Contains(userId) ? AdminKeyboard : MainKeyboard;
                             int points = GetPoints(userId);
                             int completedTasksCount = GetCompletedTasksCount(userId);
                             await _bot.SendMessage(chatId, 
@@ -382,7 +409,7 @@ namespace CoffeeLikeBot
                             break;
 
                         case "Задания":
-                            if (userId == AdminId)
+                            if (AdminIds.Contains(userId))
                             {
                                 await ShowAdminTasksMenu(chatId, cancellationToken);
                             }
@@ -392,13 +419,13 @@ namespace CoffeeLikeBot
                             }
                             break;
 
-                        case "Запросы" when userId == AdminId:
+                        case "Запросы" when AdminIds.Contains(userId):
                             await ShowRequestsMenu(chatId, cancellationToken);
                             break;
 
                         case "Магазин":
                             // Для админа показываем меню управления магазином
-                            if (userId == AdminId)
+                            if (AdminIds.Contains(userId))
                             {
                                 await ShowAdminShopMenu(chatId, cancellationToken);
                             }
@@ -533,12 +560,16 @@ namespace CoffeeLikeBot
                         var userDisplay = username != null ? $"@{username}" : $"ID: {userId}";
                         var task = GetTaskById(taskId);
                         
-                        await _bot.SendMessage(AdminId, 
-                            $"🔔 Новая заявка на задание!\n\n" +
-                            $"👤 От: {userDisplay}\n" +
-                            $"✅ Задание: {task.Title}\n" +
-                            $"💰 Баллов: {task.Reward}", 
-                            cancellationToken: cancellationToken);
+                        foreach (var adminId in AdminIds)
+                        {
+                            await _bot.SendMessage(
+                                adminId,
+                                $"🔔 Новая заявка на задание!\n\n" +
+                                $"👤 От: {userDisplay}\n" +
+                                $"✅ Задание: {task.Title}\n" +
+                                $"💰 Баллов: {task.Reward}",
+                                cancellationToken: cancellationToken);
+                        }
 
                         await _bot.EditMessageText(
                             chatId,
@@ -784,12 +815,17 @@ namespace CoffeeLikeBot
                         var username = callbackQuery.From.Username;
                         var userDisplay = username != null ? $"@{username}" : $"ID: {userId}";
 
-                        await _bot.SendMessage(AdminId,
-                            $"🛍️ Новый заказ товара!\n\n" +
-                            $"👤 От: {userDisplay}\n" +
-                            $"📦 Товар: {product.Name}\n" +
-                            $"💰 Цена: {product.Price} бонусов",
-                            cancellationToken: cancellationToken);
+                        foreach (var adminId in AdminIds)
+                        {
+                            await _bot.SendMessage(
+                                adminId,
+                                $"🛍️ Новый заказ товара!\n\n" +
+                                $"👤 От: {userDisplay}\n" +
+                                $"📦 Товар: {product.Name}\n" +
+                                $"💰 Цена: {product.Price} бонусов",
+                                cancellationToken: cancellationToken);
+                        }
+
 
                         await _bot.EditMessageText(
                             chatId,
@@ -866,8 +902,14 @@ namespace CoffeeLikeBot
 
         private static async Task ShowProductsForDelete(long chatId, CancellationToken cancellationToken)
         {
-            var products = GetAllProducts();
-
+            var products = GetAllProducts().ToList();
+            
+            Console.WriteLine($"🔍 Товаров для удаления: {products.Count}");
+            foreach (var p in products)
+            {
+                Console.WriteLine($"   ID={p.Id}, Name={p.Name}");
+            }
+            
             if (!products.Any())
             {
                 await _bot.SendMessage(chatId,
@@ -907,27 +949,70 @@ namespace CoffeeLikeBot
         private static void DeleteProduct(int productId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
+    
+            // Проверяем есть ли заказы
+            var ordersCount = connection.QuerySingle<int>(
+                "SELECT COUNT(*) FROM Orders WHERE ProductId = @Id", 
+                new { Id = productId });
+    
+            Console.WriteLine($"📦 Товар ID {productId}: заказов - {ordersCount}");
+    
+            if (ordersCount > 0)
+            {
+                Console.WriteLine($"⚠️ У товара есть {ordersCount} заказов. Удаляем их тоже...");
+                // Удаляем связанные заказы
+                connection.Execute("DELETE FROM Orders WHERE ProductId = @Id", new { Id = productId });
+            }
+    
+            // Теперь удаляем товар
             connection.Execute("DELETE FROM Products WHERE Id = @Id", new { Id = productId });
+            Console.WriteLine($"✅ Товар ID {productId} удалён");
         }
+
         
         // === ПРОФИЛЬ ===
         private static async Task ShowProfileInfo(long chatId, long userId, CancellationToken cancellationToken)
         {
             var userInfo = GetUserFullInfo(userId);
-            var points = GetPoints(userId);
-            var completedCount = GetCompletedTasksCount(userId);
-            var ordersCount = GetUserOrdersCount(userId);
+    
+            string message;
+    
+            if (AdminIds.Contains(userId))
+            {
+                // Профиль для админа
+                var tasksStats = GetAdminTasksStats();
+                var ordersStats = GetAdminOrdersStats();
+        
+                message = $"👤 Ваш профиль (Администратор)\n\n" +
+                          $"📝 Имя: {userInfo.FullName}\n" +
+                          $"🆔 Telegram ID: {userId}\n";
 
-            var message = $"👤 Ваш профиль\n\n" +
-                         $"📝 Имя: {userInfo.FullName}\n" +
-                         $"🆔 Telegram ID: {userId}\n";
+                if (!string.IsNullOrEmpty(userInfo.Username))
+                    message += $"📱 Username: @{userInfo.Username}\n";
 
-            if (!string.IsNullOrEmpty(userInfo.Username))
-                message += $"📱 Username: @{userInfo.Username}\n";
+                message += $"\n📊 Статистика:\n" +
+                           $"✅ Согласовано заданий: {tasksStats.Approved}\n" +
+                           $"❌ Отклонено заданий: {tasksStats.Rejected}\n" +
+                           $"📦 Принято заказов: {ordersStats}";
+            }
+            else
+            {
+                // Профиль для бариста
+                var points = GetPoints(userId);
+                var completedCount = GetCompletedTasksCount(userId);
+                var ordersCount = GetUserOrdersCount(userId);
 
-            message += $"\n💰 Бонусов: {points}\n" +
-                      $"✅ Выполнено заданий: {completedCount}\n" +
-                      $"🛍️ Куплено товаров: {ordersCount}";
+                message = $"👤 Ваш профиль\n\n" +
+                          $"📝 Имя: {userInfo.FullName}\n" +
+                          $"🆔 Telegram ID: {userId}\n";
+
+                if (!string.IsNullOrEmpty(userInfo.Username))
+                    message += $"📱 Username: @{userInfo.Username}\n";
+
+                message += $"\n💰 Бонусов: {points}\n" +
+                           $"✅ Выполнено заданий: {completedCount}\n" +
+                           $"🛍️ Куплено товаров: {ordersCount}";
+            }
 
             await _bot.SendMessage(chatId, message, cancellationToken: cancellationToken);
         }
@@ -1386,56 +1471,103 @@ namespace CoffeeLikeBot
                 replyMarkup: new InlineKeyboardMarkup(buttons),
                 cancellationToken: cancellationToken);
         }
-
-        // === ИСТОРИЯ ===
-        private static async Task ShowHistory(long chatId, long userId, CancellationToken cancellationToken)
-        {
-            var completedTasks = GetUserCompletedTasks(userId);
-            var orders = GetUserOrders(userId);
-
-            string message = "📜 Ваша история\n\n";
-
-            if (completedTasks.Any())
+            // === ИСТОРИЯ ===
+            private static async Task ShowHistory(long chatId, long userId, CancellationToken cancellationToken)
             {
-                message += "✅ Выполненные задания:\n";
-                foreach (var task in completedTasks.Take(5))
+                string message;
+                
+                if (AdminIds.Contains(userId))
                 {
-                    message += $"• {task.Title} (+{task.Reward} 💰) — {task.CompletedAt:dd.MM.yyyy}\n";
+                    // История для админа
+                    var tasksHistory = GetAdminTasksHistory();
+                    var ordersHistory = GetAdminOrdersHistory();
+
+                    message = "📜 История действий администратора:\n\n";
+
+                    if (tasksHistory.Any())
+                    {
+                        message += "📋 Рассмотренные задания:\n";
+                        foreach (var task in tasksHistory.Take(10))
+                        {
+                            var statusEmoji = task.Status == "approved" ? "✅" : "❌";
+                            var statusText = task.Status == "approved" ? "Согласовано" : "Отклонено";
+                            message += $"{statusEmoji} {task.BaristaName} — {task.TaskTitle}\n   {statusText} | {task.ReviewedAt:dd.MM.yyyy HH:mm}\n\n";
+                        }
+                        if (tasksHistory.Count() > 10)
+                            message += $"... и еще {tasksHistory.Count() - 10}\n";
+                    }
+                    else
+                    {
+                        message += "📋 Рассмотренных заданий пока нет\n";
+                    }
+
+                    message += "\n";
+
+                    if (ordersHistory.Any())
+                    {
+                        message += "📦 Обработанные заказы:\n";
+                        foreach (var order in ordersHistory.Take(10))
+                        {
+                            message += $"🚀 {order.BaristaName} — {order.ProductName}\n   В работе | {order.OrderDate:dd.MM.yyyy HH:mm}\n\n";
+                        }
+                        if (ordersHistory.Count() > 10)
+                            message += $"... и еще {ordersHistory.Count() - 10}\n";
+                    }
+                    else
+                    {
+                        message += "📦 Обработанных заказов пока нет\n";
+                    }
                 }
-                if (completedTasks.Count() > 5)
-                    message += $"... и еще {completedTasks.Count() - 5}\n";
-            }
-            else
-            {
-                message += "✅ Выполненных заданий пока нет\n";
-            }
-
-            message += "\n";
-
-            if (orders.Any())
-            {
-                message += "🛍️ Покупки:\n";
-                foreach (var order in orders.Take(5))
+                else
                 {
-                    message += $"• {order.ProductName} (-{order.Price} 💰) — {order.OrderDate:dd.MM.yyyy}\n";
+                    // История для бариста
+                    var completedTasks = GetUserCompletedTasks(userId);
+                    var orders = GetUserOrders(userId);
+
+                    message = "📜 Ваша история\n\n";
+
+                    if (completedTasks.Any())
+                    {
+                        message += "✅ Выполненные задания:\n";
+                        foreach (var task in completedTasks.Take(5))
+                        {
+                            message += $"• {task.Title} (+{task.Reward} 💰) — {task.CompletedAt:dd.MM.yyyy}\n";
+                        }
+                        if (completedTasks.Count() > 5)
+                            message += $"... и еще {completedTasks.Count() - 5}\n";
+                    }
+                    else
+                    {
+                        message += "✅ Выполненных заданий пока нет\n";
+                    }
+
+                    message += "\n";
+
+                    if (orders.Any())
+                    {
+                        message += "🛍️ Покупки:\n";
+                        foreach (var order in orders.Take(5))
+                        {
+                            message += $"• {order.ProductName} (-{order.Price} 💰) — {order.OrderDate:dd.MM.yyyy}\n";
+                        }
+                        if (orders.Count() > 5)
+                            message += $"... и еще {orders.Count() - 5}\n";
+                    }
+                    else
+                    {
+                        message += "🛍️ Покупок пока нет\n";
+                    }
                 }
-                if (orders.Count() > 5)
-                    message += $"... и еще {orders.Count() - 5}\n";
-            }
-            else
-            {
-                message += "🛍️ Покупок пока нет\n";
-            }
 
-            await _bot.SendMessage(chatId, message, cancellationToken: cancellationToken);
-        }
-
+                await _bot.SendMessage(chatId, message, cancellationToken: cancellationToken);
+            }
+        
         private static Task HandleErrorAsync(ITelegramBotClient bot, Exception ex, CancellationToken cancellationToken)
         {
             Console.WriteLine($"❌ Ошибка: {ex.Message}");
             return Task.CompletedTask;
         }
-
+        
         // ====== БАЗА ДАННЫХ ======
         
         private static void InitializeDatabase()
@@ -1495,19 +1627,7 @@ namespace CoffeeLikeBot
                     FOREIGN KEY (ProductId) REFERENCES Products(Id)
                 )");
 
-            var productsCount = connection.QuerySingle<int>("SELECT COUNT(*) FROM Products");
-            if (productsCount == 0)
-            {
-                connection.Execute(@"
-                    INSERT INTO Products (Name, Description, Price, Category, ImageUrl) VALUES 
-                    ('Наушники AirPods', 'Беспроводные наушники Apple', 5000, 'tech', 'https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?w=400'),
-                    ('Умная колонка', 'Яндекс Станция Мини', 3000, 'tech', 'https://images.unsplash.com/photo-1543512214-318c7553f230?w=400'),
-                    ('Футболка Coffee Like', 'Брендированная футболка', 500, 'merch', 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400'),
-                    ('Кружка с логотипом', 'Термокружка 350мл', 300, 'merch', 'https://images.unsplash.com/photo-1514228742587-6b1558fcca3d?w=400'),
-                    ('Сертификат 500₽', 'Подарочный сертификат на 500₽', 400, 'cert', 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=400'),
-                    ('Сертификат 1000₽', 'Подарочный сертификат на 1000₽', 800, 'cert', 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=400')");
-                Console.WriteLine("✅ Товары добавлены");
-            }
+            // ДЕФОЛТНЫЕ ПРОДУКТЫ удалены
         }
 
         private static void RegisterUserWithFullName(long telegramId, string? username, string fullName)
@@ -1517,7 +1637,7 @@ namespace CoffeeLikeBot
                 "INSERT OR REPLACE INTO Users (TelegramId, Username, FullName, Points) VALUES (@TelegramId, @Username, @FullName, COALESCE((SELECT Points FROM Users WHERE TelegramId = @TelegramId), 0))", 
                 new { TelegramId = telegramId, Username = username ?? "", FullName = fullName });
         }
-
+        
         private static bool IsUserRegistered(long telegramId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
@@ -1576,7 +1696,24 @@ namespace CoffeeLikeBot
         private static void DeleteTask(int taskId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
+    
+            // Проверяем есть ли выполнения
+            var completedCount = connection.QuerySingle<int>(
+                "SELECT COUNT(*) FROM CompletedTasks WHERE TaskId = @Id", 
+                new { Id = taskId });
+    
+            Console.WriteLine($"📝 Задание ID {taskId}: выполнений - {completedCount}");
+    
+            if (completedCount > 0)
+            {
+                Console.WriteLine($"⚠️ У задания есть {completedCount} выполнений. Удаляем их тоже...");
+                // Удаляем связанные выполнения
+                connection.Execute("DELETE FROM CompletedTasks WHERE TaskId = @Id", new { Id = taskId });
+            }
+    
+            // Теперь удаляем задание
             connection.Execute("DELETE FROM Tasks WHERE Id = @Id", new { Id = taskId });
+            Console.WriteLine($"✅ Задание ID {taskId} удалено");
         }
 
         private static IEnumerable<(int Id, string Title, int Reward)> GetTasks()
@@ -1779,6 +1916,51 @@ namespace CoffeeLikeBot
             return connection.QueryFirstOrDefault<int>(
                 "SELECT COUNT(*) FROM Orders WHERE UserId = @UserId",
                 new { UserId = telegramId });
+        }
+        // === СТАТИСТИКА АДМИНА ===
+        private static (int Approved, int Rejected) GetAdminTasksStats()
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            var approved = connection.QuerySingle<int>(
+                "SELECT COUNT(*) FROM CompletedTasks WHERE Status = 'approved'");
+            var rejected = connection.QuerySingle<int>(
+                "SELECT COUNT(*) FROM CompletedTasks WHERE Status = 'rejected'");
+            return (approved, rejected);
+        }
+
+        private static int GetAdminOrdersStats()
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            return connection.QuerySingle<int>(
+                "SELECT COUNT(*) FROM Orders WHERE Status = 'in_progress'");
+        }
+
+        private static IEnumerable<(string BaristaName, string TaskTitle, string Status, DateTime ReviewedAt)> GetAdminTasksHistory()
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            var sql = @"
+        SELECT u.FullName as BaristaName, t.Title as TaskTitle, c.Status, c.CreatedAt as ReviewedAt
+        FROM CompletedTasks c
+        JOIN Users u ON u.TelegramId = c.UserId
+        JOIN Tasks t ON t.Id = c.TaskId
+        WHERE c.Status IN ('approved', 'rejected')
+        ORDER BY c.CreatedAt DESC
+        LIMIT 20";
+            return connection.Query<(string, string, string, DateTime)>(sql);
+        }
+
+        private static IEnumerable<(string BaristaName, string ProductName, string Status, DateTime OrderDate)> GetAdminOrdersHistory()
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            var sql = @"
+        SELECT u.FullName as BaristaName, p.Name as ProductName, o.Status, o.CreatedAt as OrderDate
+        FROM Orders o
+        JOIN Users u ON u.TelegramId = o.UserId
+        JOIN Products p ON p.Id = o.ProductId
+        WHERE o.Status = 'in_progress'
+        ORDER BY o.CreatedAt DESC
+        LIMIT 20";
+            return connection.Query<(string, string, string, DateTime)>(sql);
         }
     }
 }
