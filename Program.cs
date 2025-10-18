@@ -46,6 +46,7 @@ namespace CoffeeLikeBot
         static async Task Main()
         {
             InitializeDatabase();
+            MigrateDatabase();
 
             _bot = new TelegramBotClient("8468991260:AAEE5dkLzeKXr7kNBCo1O3LI0T_Sm6E2ixo");
 
@@ -607,28 +608,34 @@ namespace CoffeeLikeBot
                         var taskId = int.Parse(parts[2]);
                         var requestId = int.Parse(parts[3]);
 
-                        var task = GetTaskById(taskId);
-                        AddPoints(baristaId, task.Reward);
-                        UpdateRequestStatus(requestId, "approved");
+                        using (var connection = new SqliteConnection(DbPath))
+                        {
+                            var taskInfo = connection.QueryFirst<(string TaskTitle, int TaskReward)>(
+                                "SELECT TaskTitle, TaskReward FROM CompletedTasks WHERE Id = @RequestId",
+                                new { RequestId = requestId });
+        
+                            AddPoints(baristaId, taskInfo.TaskReward);
+                            UpdateRequestStatus(requestId, "approved");
 
-                        await _bot.AnswerCallbackQuery(callbackQuery.Id, 
-                            $"✅ Начислено {task.Reward} баллов!", 
-                            cancellationToken: cancellationToken);
-                        
-                        await _bot.SendMessage(baristaId, 
-                            $"🎉 Поздравляем! Задание выполнено!\n\n" +
-                            $"✅ {task.Title}\n" +
-                            $"💰 Начислено: {task.Reward} бонусов", 
-                            cancellationToken: cancellationToken);
-                        
-                        await _bot.EditMessageText(
-                            chatId,
-                            callbackQuery.Message.MessageId,
-                            callbackQuery.Message.Text + "\n\n✅ ОДОБРЕНО",
-                            cancellationToken: cancellationToken);
-                        
-                        await Task.Delay(500, cancellationToken);
-                        await ShowRequestsList(chatId, cancellationToken);
+                            await _bot.AnswerCallbackQuery(callbackQuery.Id, 
+                                $"✅ Начислено {taskInfo.TaskReward} баллов!", 
+                                cancellationToken: cancellationToken);
+        
+                            await _bot.SendMessage(baristaId, 
+                                $"🎉 Поздравляем! Задание выполнено!\n\n" +
+                                $"✅ {taskInfo.TaskTitle}\n" +
+                                $"💰 Начислено: {taskInfo.TaskReward} бонусов", 
+                                cancellationToken: cancellationToken);
+        
+                            await _bot.EditMessageText(
+                                chatId,
+                                callbackQuery.Message.MessageId,
+                                callbackQuery.Message.Text + "\n\n✅ ОДОБРЕНО",
+                                cancellationToken: cancellationToken);
+        
+                            await Task.Delay(500, cancellationToken);
+                            await ShowRequestsList(chatId, cancellationToken);
+                        }
                         return;
                     }
 
@@ -949,26 +956,9 @@ namespace CoffeeLikeBot
         private static void DeleteProduct(int productId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
-    
-            // Проверяем есть ли заказы
-            var ordersCount = connection.QuerySingle<int>(
-                "SELECT COUNT(*) FROM Orders WHERE ProductId = @Id", 
-                new { Id = productId });
-    
-            Console.WriteLine($"📦 Товар ID {productId}: заказов - {ordersCount}");
-    
-            if (ordersCount > 0)
-            {
-                Console.WriteLine($"⚠️ У товара есть {ordersCount} заказов. Удаляем их тоже...");
-                // Удаляем связанные заказы
-                connection.Execute("DELETE FROM Orders WHERE ProductId = @Id", new { Id = productId });
-            }
-    
-            // Теперь удаляем товар
             connection.Execute("DELETE FROM Products WHERE Id = @Id", new { Id = productId });
             Console.WriteLine($"✅ Товар ID {productId} удалён");
         }
-
         
         // === ПРОФИЛЬ ===
         private static async Task ShowProfileInfo(long chatId, long userId, CancellationToken cancellationToken)
@@ -1572,62 +1562,63 @@ namespace CoffeeLikeBot
         
         private static void InitializeDatabase()
         {
+            Console.WriteLine("🔧 Инициализация базы данных...");
+    
             using IDbConnection connection = new SqliteConnection(DbPath);
-            
+    
             connection.Execute(@"
-                CREATE TABLE IF NOT EXISTS Users (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    TelegramId INTEGER UNIQUE NOT NULL,
-                    Username TEXT,
-                    FullName TEXT NOT NULL,
-                    Points INTEGER DEFAULT 0,
-                    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-                )");
+        CREATE TABLE IF NOT EXISTS Users (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            TelegramId INTEGER UNIQUE NOT NULL,
+            Username TEXT,
+            FullName TEXT NOT NULL,
+            Points INTEGER DEFAULT 0,
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )");
 
             connection.Execute(@"
-                CREATE TABLE IF NOT EXISTS Tasks (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    Title TEXT NOT NULL,
-                    Reward INTEGER NOT NULL,
-                    Month TEXT,
-                    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-                )");
+        CREATE TABLE IF NOT EXISTS Tasks (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Title TEXT NOT NULL,
+            Reward INTEGER NOT NULL,
+            Month TEXT,
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )");
 
             connection.Execute(@"
-                CREATE TABLE IF NOT EXISTS CompletedTasks (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    UserId INTEGER NOT NULL,
-                    TaskId INTEGER NOT NULL,
-                    Status TEXT DEFAULT 'pending',
-                    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (UserId) REFERENCES Users(TelegramId),
-                    FOREIGN KEY (TaskId) REFERENCES Tasks(Id)
-                )");
+        CREATE TABLE IF NOT EXISTS CompletedTasks (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            TaskId INTEGER NOT NULL,
+            TaskTitle TEXT NOT NULL,
+            TaskReward INTEGER NOT NULL,
+            Status TEXT DEFAULT 'pending',
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )");
 
             connection.Execute(@"
-                CREATE TABLE IF NOT EXISTS Products (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    Name TEXT NOT NULL,
-                    Description TEXT,
-                    Price INTEGER NOT NULL,
-                    Category TEXT NOT NULL,
-                    ImageUrl TEXT,
-                    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-                )");
+        CREATE TABLE IF NOT EXISTS Products (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Name TEXT NOT NULL,
+            Description TEXT,
+            Price INTEGER NOT NULL,
+            Category TEXT NOT NULL,
+            ImageUrl TEXT,
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )");
 
             connection.Execute(@"
-                CREATE TABLE IF NOT EXISTS Orders (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    UserId INTEGER NOT NULL,
-                    ProductId INTEGER NOT NULL,
-                    Price INTEGER NOT NULL,
-                    Status TEXT DEFAULT 'pending',
-                    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (UserId) REFERENCES Users(TelegramId),
-                    FOREIGN KEY (ProductId) REFERENCES Products(Id)
-                )");
-
-            // ДЕФОЛТНЫЕ ПРОДУКТЫ удалены
+        CREATE TABLE IF NOT EXISTS Orders (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            ProductId INTEGER NOT NULL,
+            ProductName TEXT NOT NULL,
+            Price INTEGER NOT NULL,
+            Status TEXT DEFAULT 'pending',
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )");
+    
+            Console.WriteLine("✅ База данных инициализирована!");
         }
 
         private static void RegisterUserWithFullName(long telegramId, string? username, string fullName)
@@ -1696,26 +1687,10 @@ namespace CoffeeLikeBot
         private static void DeleteTask(int taskId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
-    
-            // Проверяем есть ли выполнения
-            var completedCount = connection.QuerySingle<int>(
-                "SELECT COUNT(*) FROM CompletedTasks WHERE TaskId = @Id", 
-                new { Id = taskId });
-    
-            Console.WriteLine($"📝 Задание ID {taskId}: выполнений - {completedCount}");
-    
-            if (completedCount > 0)
-            {
-                Console.WriteLine($"⚠️ У задания есть {completedCount} выполнений. Удаляем их тоже...");
-                // Удаляем связанные выполнения
-                connection.Execute("DELETE FROM CompletedTasks WHERE TaskId = @Id", new { Id = taskId });
-            }
-    
-            // Теперь удаляем задание
             connection.Execute("DELETE FROM Tasks WHERE Id = @Id", new { Id = taskId });
             Console.WriteLine($"✅ Задание ID {taskId} удалено");
         }
-
+        
         private static IEnumerable<(int Id, string Title, int Reward)> GetTasks()
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
@@ -1760,9 +1735,13 @@ namespace CoffeeLikeBot
         private static void SaveTaskRequest(long telegramId, int taskId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
+    
+            // Получаем информацию о задании
+            var task = GetTaskById(taskId);
+    
             connection.Execute(
-                "INSERT INTO CompletedTasks (UserId, TaskId, Status) VALUES (@UserId, @TaskId, 'pending')",
-                new { UserId = telegramId, TaskId = taskId });
+                "INSERT INTO CompletedTasks (UserId, TaskId, TaskTitle, TaskReward, Status) VALUES (@UserId, @TaskId, @TaskTitle, @TaskReward, 'pending')",
+                new { UserId = telegramId, TaskId = taskId, TaskTitle = task.Title, TaskReward = task.Reward });
         }
 
         private static void UpdateRequestStatus(int requestId, string status)
@@ -1778,10 +1757,9 @@ namespace CoffeeLikeBot
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
                 SELECT c.Id as RequestId, c.UserId, c.TaskId, u.Username as Username, 
-                       t.Title as TaskTitle, t.Reward, c.CreatedAt
+                       c.TaskTitle, c.TaskReward as Reward, c.CreatedAt
                 FROM CompletedTasks c
                 JOIN Users u ON u.TelegramId = c.UserId
-                JOIN Tasks t ON t.Id = c.TaskId
                 WHERE c.Status = 'pending'
                 ORDER BY c.CreatedAt ASC";
             return connection.Query<(int, long, int, string?, string, int, DateTime)>(sql).AsList();
@@ -1791,10 +1769,9 @@ namespace CoffeeLikeBot
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
-                SELECT c.UserId, c.TaskId, u.Username, t.Title, t.Reward, c.CreatedAt
+                SELECT c.UserId, c.TaskId, u.Username, c.TaskTitle, c.TaskReward as Reward, c.CreatedAt
                 FROM CompletedTasks c
                 JOIN Users u ON u.TelegramId = c.UserId
-                JOIN Tasks t ON t.Id = c.TaskId
                 WHERE c.Id = @RequestId AND c.Status = 'pending'";
             return connection.QueryFirstOrDefault<(long, int, string?, string, int, DateTime)>(sql, new { RequestId = requestId });
         }
@@ -1827,9 +1804,13 @@ namespace CoffeeLikeBot
         private static void CreateOrder(long telegramId, int productId, int price)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
+    
+            // Получаем название товара
+            var product = GetProductById(productId);
+    
             connection.Execute(
-                "INSERT INTO Orders (UserId, ProductId, Price, Status) VALUES (@UserId, @ProductId, @Price, 'pending')",
-                new { UserId = telegramId, ProductId = productId, Price = price });
+                "INSERT INTO Orders (UserId, ProductId, ProductName, Price, Status) VALUES (@UserId, @ProductId, @ProductName, @Price, 'pending')",
+                new { UserId = telegramId, ProductId = productId, ProductName = product.Name, Price = price });
         }
 
         // === ЗАКАЗЫ ТОВАРОВ ===
@@ -1837,9 +1818,8 @@ namespace CoffeeLikeBot
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
-                SELECT o.Id as OrderId, o.UserId, o.ProductId, p.Name as ProductName, o.Price, o.CreatedAt
+                SELECT o.Id as OrderId, o.UserId, o.ProductId, o.ProductName, o.Price, o.CreatedAt
                 FROM Orders o
-                JOIN Products p ON p.Id = o.ProductId
                 WHERE o.Status = 'pending'
                 ORDER BY o.CreatedAt ASC";
             return connection.Query<(int, long, int, string, int, DateTime)>(sql).AsList();
@@ -1868,11 +1848,10 @@ namespace CoffeeLikeBot
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
-                SELECT t.Title, t.Reward, c.CreatedAt as CompletedAt
-                FROM CompletedTasks c
-                JOIN Tasks t ON t.Id = c.TaskId
-                WHERE c.UserId = @UserId AND c.Status = 'approved'
-                ORDER BY c.CreatedAt DESC";
+                SELECT TaskTitle as Title, TaskReward as Reward, CreatedAt as CompletedAt
+                FROM CompletedTasks
+                WHERE UserId = @UserId AND Status = 'approved'
+                ORDER BY CreatedAt DESC";
             return connection.Query<(string, int, DateTime)>(sql, new { UserId = telegramId });
         }
 
@@ -1880,11 +1859,10 @@ namespace CoffeeLikeBot
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
-                SELECT p.Name as ProductName, o.Price, o.CreatedAt as OrderDate
-                FROM Orders o
-                JOIN Products p ON p.Id = o.ProductId
-                WHERE o.UserId = @UserId
-                ORDER BY o.CreatedAt DESC";
+            SELECT ProductName, Price, CreatedAt as OrderDate
+            FROM Orders
+            WHERE UserId = @UserId
+            ORDER BY CreatedAt DESC";
             return connection.Query<(string, int, DateTime)>(sql, new { UserId = telegramId });
         }
 
@@ -1939,13 +1917,12 @@ namespace CoffeeLikeBot
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
-        SELECT u.FullName as BaristaName, t.Title as TaskTitle, c.Status, c.CreatedAt as ReviewedAt
-        FROM CompletedTasks c
-        JOIN Users u ON u.TelegramId = c.UserId
-        JOIN Tasks t ON t.Id = c.TaskId
-        WHERE c.Status IN ('approved', 'rejected')
-        ORDER BY c.CreatedAt DESC
-        LIMIT 20";
+                SELECT u.FullName as BaristaName, c.TaskTitle, c.Status, c.CreatedAt as ReviewedAt
+                FROM CompletedTasks c
+                JOIN Users u ON u.TelegramId = c.UserId
+                WHERE c.Status IN ('approved', 'rejected')
+                ORDER BY c.CreatedAt DESC
+                LIMIT 20";
             return connection.Query<(string, string, string, DateTime)>(sql);
         }
 
@@ -1953,14 +1930,76 @@ namespace CoffeeLikeBot
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
             var sql = @"
-        SELECT u.FullName as BaristaName, p.Name as ProductName, o.Status, o.CreatedAt as OrderDate
-        FROM Orders o
-        JOIN Users u ON u.TelegramId = o.UserId
-        JOIN Products p ON p.Id = o.ProductId
-        WHERE o.Status = 'in_progress'
-        ORDER BY o.CreatedAt DESC
-        LIMIT 20";
+                SELECT u.FullName as BaristaName, o.ProductName, o.Status, o.CreatedAt as OrderDate
+                FROM Orders o
+                JOIN Users u ON u.TelegramId = o.UserId
+                WHERE o.Status = 'in_progress'
+                ORDER BY o.CreatedAt DESC
+                LIMIT 20";
             return connection.Query<(string, string, string, DateTime)>(sql);
+        }
+        private static void MigrateDatabase()
+        {
+            using IDbConnection connection = new SqliteConnection(DbPath);
+            
+            try
+            {
+                Console.WriteLine("🔄 Проверка структуры базы данных...");
+                
+                // Проверяем есть ли колонка TaskTitle в CompletedTasks
+                var columns = connection.Query<string>(
+                    "SELECT name FROM pragma_table_info('CompletedTasks')").ToList();
+                
+                if (!columns.Contains("TaskTitle"))
+                {
+                    Console.WriteLine("📝 Добавляем колонки в CompletedTasks...");
+                    connection.Execute("ALTER TABLE CompletedTasks ADD COLUMN TaskTitle TEXT");
+                    connection.Execute("ALTER TABLE CompletedTasks ADD COLUMN TaskReward INTEGER");
+                    
+                    // Заполняем данные из существующих записей
+                    var updated = connection.Execute(@"
+                        UPDATE CompletedTasks 
+                        SET TaskTitle = COALESCE((SELECT Title FROM Tasks WHERE Tasks.Id = CompletedTasks.TaskId), 'Удаленное задание'),
+                            TaskReward = COALESCE((SELECT Reward FROM Tasks WHERE Tasks.Id = CompletedTasks.TaskId), 0)
+                        WHERE TaskTitle IS NULL");
+                    
+                    Console.WriteLine($"✅ Обновлено записей CompletedTasks: {updated}");
+                }
+                else
+                {
+                    Console.WriteLine("✅ CompletedTasks уже имеет нужные колонки");
+                }
+                
+                // Проверяем есть ли колонка ProductName в Orders
+                var orderColumns = connection.Query<string>(
+                    "SELECT name FROM pragma_table_info('Orders')").ToList();
+                
+                if (!orderColumns.Contains("ProductName"))
+                {
+                    Console.WriteLine("📦 Добавляем колонку ProductName в Orders...");
+                    connection.Execute("ALTER TABLE Orders ADD COLUMN ProductName TEXT");
+                    
+                    // Заполняем данные из существующих записей
+                    var updated = connection.Execute(@"
+                        UPDATE Orders 
+                        SET ProductName = COALESCE((SELECT Name FROM Products WHERE Products.Id = Orders.ProductId), 'Удаленный товар')
+                        WHERE ProductName IS NULL");
+                    
+                    Console.WriteLine($"✅ Обновлено записей Orders: {updated}");
+                }
+                else
+                {
+                    Console.WriteLine("✅ Orders уже имеет колонку ProductName");
+                }
+                
+                Console.WriteLine("✅ Миграция базы данных завершена!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Ошибка миграции: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                throw;
+            }
         }
     }
 }
