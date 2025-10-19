@@ -17,7 +17,30 @@ namespace CoffeeLikeBot
     class Program
     {
         private static ITelegramBotClient _bot = null!;
-        private static readonly string DbPath = "Data Source=coffeelike.db";
+        private static readonly string DbPath = GetDatabasePath();
+        private static string GetDatabasePath()
+        {
+            // Получаем папку где находится исполняемый файл (dll)
+            var assemblyLocation = AppContext.BaseDirectory;
+    
+            // Поднимаемся на 3 уровня вверх: bin/Debug/net6.0 -> корень проекта
+            var projectRoot = Path.GetFullPath(Path.Combine(assemblyLocation, "..", "..", ".."));
+    
+            var dataFolder = Path.Combine(projectRoot, "Data");
+    
+            // Создаём папку Data если её нет
+            if (!Directory.Exists(dataFolder))
+            {
+                Directory.CreateDirectory(dataFolder);
+                Console.WriteLine($"📁 Создана папка: {dataFolder}");
+            }
+    
+            var dbPath = Path.Combine(dataFolder, "coffeelike.db");
+            Console.WriteLine($"💾 База данных: {dbPath}");
+    
+            return $"Data Source={dbPath}";
+        }
+        
         private static readonly List<long> AdminIds = new() { 856717073, 591241444 };
 
         private static readonly Dictionary<long, string> UserStates = new();
