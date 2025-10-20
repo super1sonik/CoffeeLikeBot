@@ -70,6 +70,14 @@ namespace CoffeeLikeBot
 
             using var cts = new CancellationTokenSource();
 
+            // Обработка Ctrl+C / systemd stop
+            Console.CancelKeyPress += (sender, eventArgs) =>
+            {
+                Console.WriteLine("🛑 Остановка бота...");
+                cts.Cancel();
+                eventArgs.Cancel = true;
+            };
+
             var me = await _bot.GetMe(cancellationToken: cts.Token);
             Console.WriteLine($"✅ Бот @{me.Username} запущен...");
 
@@ -81,9 +89,10 @@ namespace CoffeeLikeBot
 
             var receiverOptions = new ReceiverOptions
             {
-                AllowedUpdates = Array.Empty<UpdateType>()
+                AllowedUpdates = Array.Empty<UpdateType>() // можно указать конкретные UpdateType
             };
 
+            // Запуск приёма обновлений
             _bot.StartReceiving(
                 HandleUpdateAsync,
                 HandleErrorAsync,
@@ -91,8 +100,19 @@ namespace CoffeeLikeBot
                 cancellationToken: cts.Token
             );
 
-            Console.ReadLine();
-            cts.Cancel();
+            Console.WriteLine("🔄 Бот работает. Для остановки нажмите Ctrl+C.");
+
+            // Бесконечно держим процесс живым
+            try
+            {
+                await Task.Delay(Timeout.Infinite, cts.Token);
+            }
+            catch (TaskCanceledException)
+            {
+                // Тут придет сигнал отмены, можно спокойно завершать
+            }
+
+            Console.WriteLine("✅ Бот остановлен.");
         }
 
         private static async Task HandleUpdateAsync(ITelegramBotClient bot, Update update, CancellationToken cancellationToken)
