@@ -20,15 +20,10 @@ namespace CoffeeLikeBot
         private static readonly string DbPath = GetDatabasePath();
         private static string GetDatabasePath()
         {
-            // Получаем папку где находится исполняемый файл (dll)
-            var assemblyLocation = AppContext.BaseDirectory;
+            // Для Linux - используем рабочую директорию
+            var workingDir = Directory.GetCurrentDirectory();
+            var dataFolder = Path.Combine(workingDir, "Data");
     
-            // Поднимаемся на 3 уровня вверх: bin/Debug/net6.0 -> корень проекта
-            var projectRoot = Path.GetFullPath(Path.Combine(assemblyLocation, "..", "..", ".."));
-    
-            var dataFolder = Path.Combine(projectRoot, "Data");
-    
-            // Создаём папку Data если её нет
             if (!Directory.Exists(dataFolder))
             {
                 Directory.CreateDirectory(dataFolder);
