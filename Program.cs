@@ -81,11 +81,11 @@ namespace CoffeeLikeBot
             var me = await _bot.GetMe(cancellationToken: cts.Token);
             Console.WriteLine($"✅ Бот @{me.Username} запущен...");
 
-            await _bot.SetMyCommands(new[]
-            {
-                new BotCommand { Command = "start", Description = "Начать работу с ботом" },
-                new BotCommand { Command = "myid", Description = "Узнать свой ID" }
-            }, cancellationToken: cts.Token);
+            //await _bot.SetMyCommands(new[]
+            //{
+            //    new BotCommand { Command = "start", Description = "Начать работу с ботом" },
+            //    new BotCommand { Command = "myid", Description = "Узнать свой ID" }
+            //}, cancellationToken: cts.Token);
 
             var receiverOptions = new ReceiverOptions
             {
@@ -1662,19 +1662,49 @@ namespace CoffeeLikeBot
         private static void RegisterUserWithFullName(long telegramId, string? username, string fullName)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
-            connection.Execute(
-                "INSERT OR REPLACE INTO Users (TelegramId, Username, FullName, Points) VALUES (@TelegramId, @Username, @FullName, COALESCE((SELECT Points FROM Users WHERE TelegramId = @TelegramId), 0))", 
-                new { TelegramId = telegramId, Username = username ?? "", FullName = fullName });
+    
+            try
+            {
+                var existingPoints = connection.QueryFirstOrDefault<int?>(
+                    "SELECT Points FROM Users WHERE TelegramId = @TelegramId",
+                    new { TelegramId = telegramId });
+        
+                if (existingPoints.HasValue)
+                {
+                    connection.Execute(
+                        "UPDATE Users SET Username = @Username, FullName = @FullName WHERE TelegramId = @TelegramId",
+                        new { TelegramId = telegramId, Username = username ?? "", FullName = fullName });
+                    Console.WriteLine($"✅ Обновлен пользователь {telegramId}: {fullName}");
+                }
+                else
+                {
+                    connection.Execute(
+                        "INSERT INTO Users (TelegramId, Username, FullName, Points) VALUES (@TelegramId, @Username, @FullName, 0)",
+                        new { TelegramId = telegramId, Username = username ?? "", FullName = fullName });
+                    Console.WriteLine($"✅ Создан новый пользователь {telegramId}: {fullName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Ошибка регистрации пользователя {telegramId}: {ex.Message}");
+                throw;
+            }
         }
         
         private static bool IsUserRegistered(long telegramId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
-            var fullName = connection.QueryFirstOrDefault<string>(
-                "SELECT FullName FROM Users WHERE TelegramId = @TelegramId",
+    
+            var user = connection.QueryFirstOrDefault<(string FullName, DateTime CreatedAt)?>(
+                "SELECT FullName, CreatedAt FROM Users WHERE TelegramId = @TelegramId",
                 new { TelegramId = telegramId });
-            
-            bool isRegistered = !string.IsNullOrEmpty(fullName) && fullName != "Неизвестный";
+    
+            bool isRegistered = user.HasValue && 
+                                !string.IsNullOrWhiteSpace(user.Value.FullName) && 
+                                user.Value.FullName != "Неизвестный";
+    
+            Console.WriteLine($"🔍 IsUserRegistered({telegramId}): {isRegistered} (FullName: {user?.FullName ?? "NULL"})");
+    
             return isRegistered;
         }
 
@@ -1689,20 +1719,38 @@ namespace CoffeeLikeBot
         private static int GetPoints(long telegramId)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
-            connection.Execute(
-                "INSERT OR IGNORE INTO Users (TelegramId, Username, FullName, Points) VALUES (@TelegramId, '', 'Неизвестный', 0)", 
-                new { TelegramId = telegramId });
-            return connection.QuerySingle<int>(
+            var points = connection.QueryFirstOrDefault<int?>(
                 "SELECT Points FROM Users WHERE TelegramId = @TelegramId", 
                 new { TelegramId = telegramId });
+    
+            if (!points.HasValue)
+            {
+                Console.WriteLine($"⚠️ Пользователь {telegramId} не найден в GetPoints, возвращаем 0");
+                return 0;
+            }
+    
+            return points.Value;
         }
 
         private static void AddPoints(long telegramId, int points)
         {
             using IDbConnection connection = new SqliteConnection(DbPath);
+    
+            var exists = connection.QueryFirstOrDefault<int?>(
+                "SELECT 1 FROM Users WHERE TelegramId = @TelegramId",
+                new { TelegramId = telegramId });
+    
+            if (!exists.HasValue)
+            {
+                Console.WriteLine($"⚠️ Попытка добавить баллы несуществующему пользователю {telegramId}");
+                return;
+            }
+    
             connection.Execute(
                 "UPDATE Users SET Points = Points + @Points WHERE TelegramId = @TelegramId", 
                 new { TelegramId = telegramId, Points = points });
+    
+            Console.WriteLine($"💰 Пользователю {telegramId} {(points > 0 ? "добавлено" : "списано")} {Math.Abs(points)} баллов");
         }
 
         // === ЗАДАНИЯ ===
